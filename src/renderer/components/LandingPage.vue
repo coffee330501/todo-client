@@ -24,11 +24,11 @@
             <!-- <div id="todoSearchInput"></div> -->
           </div>
           <!-- TODO Item -->
-          <div class="todo-item">
-            <span v-if="status == 'Closed'" @click="uncloseTodo">
+          <div class="todo-item" v-for="item in todoList" :key="item.id">
+            <span v-if="item.status == 'Closed'" @click="uncloseTodo">
               <img src="~@/assets/todo-closed.png" class="todo-status-img" />
             </span>
-            <span v-if="status == 'Pending'" @click="closeTodo">
+            <span v-if="item.status == 'Pending'" @click="closeTodo">
               <div class="todo-status-img">
                 <img
                   src="~@/assets/todo-pending.png"
@@ -36,8 +36,13 @@
                 />
               </div>
             </span>
-            <span class="todo-text">这是一项清单内容，今天吃6顿</span>
+            <span class="todo-text" @click="sync">{{ item.content }}</span>
           </div>
+          <img
+            src="~@/assets/next-page.png"
+            id="nextPageImg"
+            @click="nextPage"
+          />
         </div>
       </div>
     </div>
@@ -48,6 +53,10 @@
 <script>
   import SystemInformation from "./LandingPage/SystemInformation";
   import fs from "fs";
+  import * as neDb from "../../util/database";
+  import * as streamUtil from "../../util/streamUtil";
+  import request from "../../util/request";
+  import * as todoApi from "../../api/todoApi";
 
   export default {
     name: "landing-page",
@@ -55,8 +64,8 @@
     file: "aaa",
     data() {
       return {
-        status: "Pending",
-        configFilePath: "E:/Todo/todo-config.json",
+        todoList: [],
+        curPage: 0,
       };
     },
     methods: {
@@ -69,14 +78,68 @@
       uncloseTodo() {
         this.status = "Pending";
       },
+
+      /**
+       * 数据同步
+       */
+      async sync() {
+        await this.localSync();
+        // request({ url: "/todoList/sync", method: "put",data:[] });
+      },
+      async page() {
+        const limit = 15;
+        const res = await new Promise((resolve) => {
+          this.$db
+            .find({})
+            .sort({ createTime: 1 })
+            .skip(this.curPage * limit)
+            .limit(limit)
+            .exec(function (err, docs) {
+              return resolve(docs);
+            });
+        });
+        this.todoList = res.filter((item) =>
+          ["Pending", "Closed"].includes(item.status)
+        );
+      },
+      async nextPage() {
+        this.curPage += 1;
+        await this.page();
+      },
+      /**
+       * 同步本地数据
+       */
+      async localSync() {
+        const serverData = await todoApi.list();
+        console.log(serverData);
+        const localData = await neDb.find();
+        const localDataMap = streamUtil.listToMap(localData, "id");
+        for (const serverItem of serverData) {
+          const localItem = localDataMap.get(serverItem.id);
+          serverItem.sync = true;
+          if (!localItem) {
+            // 新增
+            await this.$db.insert(serverItem);
+          } else {
+            // 修改
+            await this.$db.update({ id: serverItem.id }, serverItem);
+          }
+        }
+      },
+      async serverSync(data) {},
     },
-    created() {
+    async created() {
       // 初始化配置文件
-      if (!fs.existsSync(this.configFilePath)) {
-      }
-      const configFileBuffer = fs.readFileSync(this.configFilePath);
-      const configJson = JSON.parse(configFileBuffer.toString());
-      console.log(configJson);
+      // if (!fs.existsSync(this.configFilePath)) {
+      // }
+      // const configFileBuffer = fs.readFileSync(this.configFilePath);
+      // const configJson = JSON.parse(configFileBuffer.toString());
+      // console.log(configJson);
+
+      // await this.$db.insert({ name: 20, age: 100 });
+      // const res = await neDb.find({ age: 100 });
+      await this.page();
+      await this.sync();
     },
   };
 </script>
@@ -157,6 +220,7 @@
     height: 40px;
     margin-top: 20px;
     border-radius: 13px;
+    opacity: 0.6;
   }
 
   .todo-item {
@@ -188,5 +252,13 @@
   .todo-text {
     color: #555;
     margin-left: 10px;
+  }
+
+  #nextPageImg {
+    float: right;
+    margin-left: 60%;
+    margin-top: 35px;
+    width: 30px;
+    height: 30px;
   }
 </style>

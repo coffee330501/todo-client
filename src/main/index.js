@@ -1,5 +1,4 @@
 import { app, BrowserWindow } from "electron";
-import { init } from "../sql/db";
 
 /**
  * Set `__static` path to static files in production
@@ -10,8 +9,6 @@ if (process.env.NODE_ENV !== "development") {
     .join(__dirname, "/static")
     .replace(/\\/g, "\\\\");
 }
-
-init();
 
 let mainWindow;
 const winURL =

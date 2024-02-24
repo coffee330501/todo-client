@@ -4,10 +4,17 @@
     <div id="todo-container">
       <!-- 标签容器 -->
       <div class="tag-container">
-        <!-- 标签Item -->
-        <div class="tag-item">
-          <span class="tag-text"> 今日计划 </span>
-        </div>
+        <ul
+          class="infinite-list"
+          v-infinite-scroll="load"
+          style="overflow: auto"
+        >
+          <!-- 标签Item -->
+          <div class="tag-item" v-for="item in tags">
+            <span class="tag-text"> {{ item }} </span>
+          </div>
+        </ul>
+
         <div id="addTag">
           <img src="~@/assets/add.png" id="addTagImg" />
           <span id="addTagText">Add Tag</span>
@@ -19,12 +26,22 @@
         <div id="todoTitle">To Do</div>
         <!-- 水平居中 -->
         <div class="horizontal-center">
-          <div id="todoSearchInput">
-            <!-- 搜索框 -->
-            <!-- <div id="todoSearchInput"></div> -->
+          <div id="todoSearchContainer">
+            <el-input
+              id="todoSearchInput"
+              @focus="onFocused"
+              @blur="onBlur"
+              v-model="searchText"
+              ref="todoSearchInput"
+            >
+              <!-- 搜索框 -->
+              <!-- <div id="todoSearchInput"></div> -->
+            </el-input>
           </div>
+
           <!-- TODO Item -->
-          <div class="todo-item" v-for="item in todoList" :key="item.id">
+
+          <div class="todo-item" v-for="item in todoList">
             <span v-if="item.status == 'Closed'" @click="uncloseTodo">
               <img src="~@/assets/todo-closed.png" class="todo-status-img" />
             </span>
@@ -38,11 +55,24 @@
             </span>
             <span class="todo-text" @click="sync">{{ item.content }}</span>
           </div>
-          <img
+
+          <!-- 分页 -->
+          <div id="pagination-container">
+            <el-pagination
+              layout="prev, pager, next"
+              :total="total"
+              :page-size="pageSize"
+              :background="true"
+              @current-change="page"
+              ref="pagination"
+            >
+            </el-pagination>
+          </div>
+          <!-- <img
             src="~@/assets/next-page.png"
             id="nextPageImg"
             @click="nextPage"
-          />
+          /> -->
         </div>
       </div>
     </div>
@@ -65,7 +95,24 @@
     data() {
       return {
         todoList: [],
+        tags: [],
+        curTag: "",
         curPage: 0,
+        total: 0,
+        pageSize: 10,
+
+        searchText: "",
+        confirmSearch: false,
+
+        focusId: "",
+
+        // 监听的键
+        listenKeys: {
+          nextPage: "ArrowRight",
+          prevPage: "ArrowLeft",
+          searchTodo: "Enter",
+          esc: "Escape",
+        },
       };
     },
     methods: {
@@ -86,32 +133,137 @@
         await this.localSync();
         // request({ url: "/todoList/sync", method: "put",data:[] });
       },
-      async page() {
-        const limit = 15;
+      async page(curPage = -1) {
+        if (curPage >= 0) this.curPage = curPage - 1;
+
+        let findExpress = { status: { $in: ["Pending", "Closed"] } };
+        if (this.confirmSearch) {
+          findExpress = {
+            status: { $in: ["Pending", "Closed"] },
+            content: new RegExp(".*" + this.searchText + ".*"),
+          };
+        }
         const res = await new Promise((resolve) => {
           this.$db
-            .find({})
-            .sort({ createTime: 1 })
-            .skip(this.curPage * limit)
-            .limit(limit)
+            .find(findExpress)
+            .sort({ createTime: -1 })
+            .skip(this.curPage * this.pageSize)
+            .limit(this.pageSize)
             .exec(function (err, docs) {
               return resolve(docs);
             });
         });
-        this.todoList = res.filter((item) =>
-          ["Pending", "Closed"].includes(item.status)
-        );
+        const total = await new Promise((resolve) => {
+          this.$db.count(findExpress).exec(function (err, docs) {
+            return resolve(docs);
+          });
+        });
+        this.todoList = res;
+        this.total = total;
+        await this.sync();
+        await this.getTags();
       },
       async nextPage() {
         this.curPage += 1;
         await this.page();
       },
       /**
+       * 监听键盘按下
+       */
+      async onKeydown() {
+        const listenKeys = this.listenKeys;
+        window.addEventListener(
+          "keydown",
+          (e) => {
+            console.log(e);
+
+            // 焦点在搜索框
+            if (this.focusId == "todoSearchInput") {
+              // 回车搜索
+              if (e.key == listenKeys.searchTodo) {
+                if (this.searchText) {
+                  this.confirmSearch = true;
+                  this.curPage = 0;
+                } else {
+                  this.confirmSearch = false;
+                }
+                this.page();
+              }
+              if (e.key == listenKeys.esc) {
+                // 触发失去焦点
+                this.$refs.todoSearchInput.blur();
+              }
+              return;
+            }
+
+            // 一般情况
+            if (e.key == listenKeys.nextPage) {
+              this.$refs.pagination.next();
+            } else if (e.key == listenKeys.prevPage) {
+              this.$refs.pagination.prev();
+            } else if (e.key == listenKeys.searchTodo) {
+              // 搜索框聚焦
+              this.$refs.todoSearchInput.focus();
+            }
+          },
+          false
+        );
+      },
+      /**
+       * 获得焦点
+       */
+      onFocused(e) {
+        this.focusId = e.target.id;
+      },
+      /**
+       * 失去焦点
+       */
+      onBlur(e) {
+        this.focusId = "";
+      },
+      async getTags() {
+        const todoTags = await new Promise((resolve) => {
+          this.$db
+            .find(
+              { status: { $in: ["Pending", "Closed"] } },
+              {
+                id: 0,
+                updateTime: 0,
+                deleteTime: 0,
+                title: 0,
+                content: 0,
+                status: 0,
+                sync: 0,
+                _id: 0,
+              }
+            )
+            .sort({ createTime: 1 })
+            .exec(function (err, docs) {
+              return resolve(docs);
+            });
+        });
+        const tagMap = new Map();
+        todoTags.forEach((i) => {
+          tagMap.set(i.tag, i);
+          return;
+        });
+        const tagsIterator = tagMap.values();
+        const tags = [];
+        for (const item of tagsIterator) {
+          tags.push(item);
+        }
+        tags.sort((a, b) =>
+          new Date(new Date(b.createTime).getTime() - a.createTime).getTime()
+        );
+        this.tags = tags.map((i) => i.tag);
+        console.log("tags-----", tags);
+      },
+      /**
        * 同步本地数据
        */
       async localSync() {
         const serverData = await todoApi.list();
-        console.log(serverData);
+        console.log("serverData:", serverData);
         const localData = await neDb.find();
         const localDataMap = streamUtil.listToMap(localData, "id");
         for (const serverItem of serverData) {
@@ -138,8 +290,10 @@
 
       // await this.$db.insert({ name: 20, age: 100 });
       // const res = await neDb.find({ age: 100 });
+      await this.getTags();
       await this.page();
       await this.sync();
+      await this.onKeydown();
     },
   };
 </script>
@@ -214,11 +368,14 @@
     font-size: 20px;
   }
 
-  #todoSearchInput {
-    background-color: #e4ebf1;
+  #todoSearchContainer {
     width: 55%;
     height: 40px;
     margin-top: 20px;
+  }
+
+  #todoSearchInput {
+    background-color: #e4ebf1;
     border-radius: 13px;
     opacity: 0.6;
   }
@@ -260,5 +417,9 @@
     margin-top: 35px;
     width: 30px;
     height: 30px;
+  }
+
+  #pagination-container {
+    margin-top: 35px;
   }
 </style>

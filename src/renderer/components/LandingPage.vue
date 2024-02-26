@@ -4,16 +4,12 @@
     <div id="todo-container">
       <!-- 标签容器 -->
       <div class="tag-container">
-        <ul
-          class="infinite-list"
-          v-infinite-scroll="load"
-          style="overflow: auto"
-        >
+        <div class="tag-list">
           <!-- 标签Item -->
           <div class="tag-item" v-for="item in tags">
             <span class="tag-text"> {{ item }} </span>
           </div>
-        </ul>
+        </div>
 
         <div id="addTag">
           <img src="~@/assets/add.png" id="addTagImg" />
@@ -23,7 +19,7 @@
 
       <!-- TODO容器 -->
       <div class="todo-list-container">
-        <div id="todoTitle">To Do</div>
+        <div id="todoTitle" style="cursor: pointer">To Do</div>
         <!-- 水平居中 -->
         <div class="horizontal-center">
           <div id="todoSearchContainer">
@@ -34,8 +30,14 @@
               v-model="searchText"
               ref="todoSearchInput"
             >
-              <!-- 搜索框 -->
-              <!-- <div id="todoSearchInput"></div> -->
+              <template #prefix>
+                <el-button
+                  id="addTodoIcon"
+                  icon="el-icon-circle-plus-outline"
+                  circle
+                  @click="openAddTodoDialog"
+                ></el-button>
+              </template>
             </el-input>
           </div>
 
@@ -68,12 +70,37 @@
             >
             </el-pagination>
           </div>
-          <!-- <img
-            src="~@/assets/next-page.png"
-            id="nextPageImg"
-            @click="nextPage"
-          /> -->
         </div>
+
+        <!-- 弹出框 -->
+        <el-dialog
+          title="Add Todo"
+          :visible.sync="addTodoDialogVisible"
+          label-width="20px"
+        >
+          <el-form
+            label-position="top"
+            label-width="80px"
+            :model="addTodoContent"
+          >
+            <el-form-item label="标签">
+              <el-input v-model="addTodoContent.tag"></el-input>
+            </el-form-item>
+            <el-form-item label="标题">
+              <el-input v-model="addTodoContent.title"></el-input>
+            </el-form-item>
+            <el-form-item label="内容">
+              <el-input v-model="addTodoContent.content"></el-input>
+            </el-form-item>
+          </el-form>
+
+          <div slot="footer" class="dialog-footer">
+            <el-button @click="addTodoDialogVisible = false">取 消</el-button>
+            <el-button type="primary" @click="confirmAddTodoDialog"
+              >确 定</el-button
+            >
+          </div>
+        </el-dialog>
       </div>
     </div>
     <!-- </main> -->
@@ -85,8 +112,9 @@
   import fs from "fs";
   import * as neDb from "../../util/database";
   import * as streamUtil from "../../util/streamUtil";
-  import request from "../../util/request";
   import * as todoApi from "../../api/todoApi";
+  import { v4 as uuidv4 } from "uuid";
+  import moment from "moment";
 
   export default {
     name: "landing-page",
@@ -96,7 +124,13 @@
       return {
         todoList: [],
         tags: [],
+
         curTag: "",
+        curTagPage: 0,
+        totalTagCount: 0,
+        tagSize: 10,
+        disableLoadTag: false,
+
         curPage: 0,
         total: 0,
         pageSize: 10,
@@ -113,12 +147,19 @@
           searchTodo: "Enter",
           esc: "Escape",
         },
+
+        // 弹出框
+        addTodoDialogVisible: false,
+        addTodoContent: {
+          tag: "",
+          content: "",
+          title: "",
+        },
+
+        editTodoDialogVisible: false,
       };
     },
     methods: {
-      // open(link) {
-      //   require("electron").shell.openExternal(link);
-      // },
       closeTodo() {
         this.status = "Closed";
       },
@@ -237,11 +278,23 @@
                 _id: 0,
               }
             )
+            .skip(this.curTagPage * this.tagSize)
+            .limit(this.tagSize)
             .sort({ createTime: 1 })
             .exec(function (err, docs) {
               return resolve(docs);
             });
         });
+        // count
+        const tagCount = await new Promise((resolve) => {
+          this.$db
+            .count({ status: { $in: ["Pending", "Closed"] } })
+            .exec(function (err, docs) {
+              return resolve(docs);
+            });
+        });
+        this.totalTagCount = tagCount;
+
         const tagMap = new Map();
         todoTags.forEach((i) => {
           tagMap.set(i.tag, i);
@@ -252,11 +305,23 @@
         for (const item of tagsIterator) {
           tags.push(item);
         }
-        tags.sort((a, b) =>
-          new Date(new Date(b.createTime).getTime() - a.createTime).getTime()
+        console.log(tags);
+        tags.sort(
+          (a, b) =>
+            new Date(a.createTime).getTime() - new Date(b.createTime).getTime()
         );
-        this.tags = tags.map((i) => i.tag);
-        console.log("tags-----", tags);
+        this.tags = [...this.tags, ...tags.map((i) => i.tag)];
+        console.log("tags-----", this.tags);
+      },
+      async nextTagList() {
+        if (this.totalTagCount != 0 && this.totalTagCount == this.tags.length) {
+          this.disableLoadTag = true;
+          return;
+        }
+
+        this.disableLoadTag = false;
+        await this.getTags();
+        this.curTagPage++;
       },
       /**
        * 同步本地数据
@@ -279,6 +344,39 @@
         }
       },
       async serverSync(data) {},
+      /**
+       * 管理新增Todo弹窗
+       */
+      openAddTodoDialog() {
+        console.log("我来了哦");
+        this.addTodoDialogVisible = true;
+      },
+      /**
+       * 确认新增Todo
+       */
+      async confirmAddTodoDialog() {
+        // 向本地数据库新增
+        await this.$db.insert({
+          id: uuidv4(),
+          createTime: moment().format("yyyy-MM-dd HH:mm:ss"),
+          updateTime: moment().format("yyyy-MM-dd HH:mm:ss"),
+          deleteTime: null,
+          title: this.addTodoContent.title,
+          content: this.addTodoContent.content,
+          status: "Pending",
+          tag: this.addTodoContent.tag,
+          sync: true,
+        });
+        // 重置输入
+        const keys = Object.keys(this.addTodoContent);
+        for (const key of keys) {
+          this.addTodoContent[key] = "";
+        }
+
+        this.addTodoDialogVisible = false;
+
+        this.page();
+      },
     },
     async created() {
       // 初始化配置文件
@@ -314,6 +412,15 @@
     background-color: #072c3e;
     min-height: 100vh;
     align-items: center;
+
+    /* 居中 */
+    display: flex;
+    flex-direction: column;
+  }
+
+  .tag-list {
+    max-height: 10vh;
+    display: block;
   }
 
   .tag-item {
@@ -421,5 +528,30 @@
 
   #pagination-container {
     margin-top: 35px;
+  }
+
+  #addTodoIcon {
+    width: 30px;
+    height: 30px;
+    font-size: 20px;
+    background-color: #e4ebf1;
+
+    opacity: 0.6;
+
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+  }
+
+  .el-input__prefix {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+  }
+
+  .el-input--prefix .el-input__inner {
+    padding-left: 40px;
   }
 </style>

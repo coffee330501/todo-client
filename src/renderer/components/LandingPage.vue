@@ -42,20 +42,22 @@
           </div>
 
           <!-- TODO Item -->
-
           <div class="todo-item" v-for="item in todoList">
-            <span v-if="item.status == 'Closed'" @click="uncloseTodo">
-              <img src="~@/assets/todo-closed.png" class="todo-status-img" />
-            </span>
-            <span v-if="item.status == 'Pending'" @click="closeTodo">
-              <div class="todo-status-img">
-                <img
-                  src="~@/assets/todo-pending.png"
-                  class="todo-img-pending"
-                />
-              </div>
-            </span>
-            <span class="todo-text" @click="sync">{{ item.content }}</span>
+            <div class="todo-title">
+              <span v-if="item.status == 'Closed'" @click="uncloseTodo">
+                <img src="~@/assets/todo-closed.png" class="todo-status-img" />
+              </span>
+              <span v-if="item.status == 'Pending'" @click="closeTodo">
+                <div class="todo-status-img">
+                  <img
+                    src="~@/assets/todo-pending.png"
+                    class="todo-img-pending"
+                  />
+                </div>
+              </span>
+              <span class="todo-text" @click="sync">{{ item.title }}</span>
+            </div>
+            <div class="todo-content">{{ item.content }}</div>
           </div>
 
           <!-- 分页 -->
@@ -84,13 +86,20 @@
             :model="addTodoContent"
           >
             <el-form-item label="标签">
-              <el-input v-model="addTodoContent.tag"></el-input>
+              <el-input
+                v-model="addTodoContent.tag"
+                :disabled="true"
+              ></el-input>
             </el-form-item>
             <el-form-item label="标题">
               <el-input v-model="addTodoContent.title"></el-input>
             </el-form-item>
             <el-form-item label="内容">
-              <el-input v-model="addTodoContent.content"></el-input>
+              <el-input
+                v-model="addTodoContent.content"
+                type="textarea"
+                :autosize="{ minRows: 2, maxRows: 10 }"
+              ></el-input>
             </el-form-item>
           </el-form>
 
@@ -172,7 +181,6 @@
        */
       async sync() {
         await this.localSync();
-        // request({ url: "/todoList/sync", method: "put",data:[] });
       },
       async page(curPage = -1) {
         if (curPage >= 0) this.curPage = curPage - 1;
@@ -181,7 +189,10 @@
         if (this.confirmSearch) {
           findExpress = {
             status: { $in: ["Pending", "Closed"] },
-            content: new RegExp(".*" + this.searchText + ".*"),
+            $or: [
+              { content: new RegExp(".*" + this.searchText + ".*") },
+              { title: new RegExp(".*" + this.searchText + ".*") },
+            ],
           };
         }
         const res = await new Promise((resolve) => {
@@ -488,14 +499,27 @@
   }
 
   .todo-item {
+    width: 100%;
+    height: 40px;
+    margin-top: 30px;
+  }
+
+  .todo-title {
     background-color: #f3eaea;
     width: 60%;
     height: 40px;
     display: flex;
     flex-direction: row;
     align-items: center;
-    margin-top: 30px;
+    margin-left: 20%;
     border-radius: 10px;
+    box-shadow: 3px 3px 6px rgba(173, 171, 171, 0.4);
+  }
+
+  .todo-content {
+    width: 60%;
+    height: 40px;
+    margin-left: 20%;
   }
 
   .todo-status-img {
